@@ -1,0 +1,190 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+
+function clamp(v, a, b) { return Math.max(a, Math.min(b, v)); }
+function easeOutCubic(t) { return 1 - Math.pow(1 - t, 3); }
+function rad(d) { return (d * Math.PI) / 180; }
+
+const DEFAULT_DATA = {
+  title: "Where should we eat?",
+  subtitle: "Spin for a cuisine → then a spot!",
+  categories: [
+    { name: "Pub Food", color: "#E57373", items: [{ name: "Bell’s Eccentric Café" }, { name: "O’Duffy’s Pub" }, { name: "Old Dog Tavern" }] },
+    { name: "Pizza", color: "#64B5F6", items: [{ name: "Erbelli’s" }, { name: "Bimbo’s Pizza" }, { name: "Maestro’s Pizza" }] },
+    { name: "Asian", color: "#81C784", items: [{ name: "Saffron Indian Cuisine" }, { name: "Bangkok Flavor" }, { name: "Ziingo" }] },
+    { name: "Mexican", color: "#FFD54F", items: [{ name: "Mi Pueblo" }, { name: "Lolita’s Tacos" }, { name: "Los Brothers" }] },
+    { name: "Italian", color: "#BA68C8", items: [{ name: "Comensoli’s" }, { name: "Martini’s KZOO" }, { name: "Gusto" }] },
+    { name: "Seafood", color: "#4DB6AC", items: [{ name: "The Tangy Crab" }, { name: "Fish Express" }, { name: "Cove Lakeside" }] },
+    { name: "Drinks", color: "#A1887F", items: [{ name: "Bell’s Eccentric Café" }, { name: "Green Door Distilling" }, { name: "Kzoo Stillhouse" }] },
+    { name: "Breakfast", color: "#90A4AE", items: [{ name: "Crow’s Nest" }, { name: "Berries Pancake House" }, { name: "Nena’s Cooper Café" }] },
+    { name: "Lunch", color: "#F06292", items: [{ name: "Greg’s Gourmet" }, { name: "Rustica" }, { name: "Principle Food & Drink" }] },
+  ],
+};
+
+function validateConfig(obj) {
+  if (!obj || typeof obj !== "object") return false;
+  if (typeof obj.title !== "string" || typeof obj.subtitle !== "string") return false;
+  if (!Array.isArray(obj.categories) || obj.categories.length === 0) return false;
+  for (const c of obj.categories) {
+    if (!c || typeof c !== "object") return false;
+    if (typeof c.name !== "string") return false;
+    if (!Array.isArray(c.items) || c.items.length === 0) return false;
+  }
+  return true;
+}
+
+function getInitialData() {
+  try {
+    const url = new URL(window.location.href);
+    const raw = url.searchParams.get("data");
+    if (!raw) return DEFAULT_DATA;
+    let decoded = raw;
+    try { decoded = decodeURIComponent(raw); } catch {}
+    let parsed;
+    try { parsed = JSON.parse(decoded); } catch { return DEFAULT_DATA; }
+    return validateConfig(parsed) ? parsed : DEFAULT_DATA;
+  } catch {
+    return DEFAULT_DATA;
+  }
+}
+
+function Wheel({ labels = [], colors = [], size = 360, onResult = () => {}, btnLabel = "Spin", centerLabel = "Tap to Spin" }) {
+  const safeLabels = Array.isArray(labels) ? labels : [];
+  const safeColors = Array.isArray(colors) ? colors : [];
+  const [spinning, setSpinning] = useState(false);
+  const [angle, setAngle] = useState(0);
+  const [targetAngle, setTargetAngle] = useState(0);
+  const r = size / 2;
+  const n = safeLabels.length;
+  const slice = n ? 360 / n : 0;
+  const canSpin = n > 0;
+  const rafId = useRef(null);
+
+  useEffect(() => () => { if (rafId.current) cancelAnimationFrame(rafId.current); }, []);
+
+  const segments = useMemo(() => {
+    if (!n) return [];
+    return Array.from({ length: n }).map((_, i) => {
+      const start = rad(i * slice - 90);
+      const end = rad((i + 1) * slice - 90);
+      const x1 = r + r * Math.cos(start);
+      const y1 = r + r * Math.sin(start);
+      const x2 = r + r * Math.cos(end);
+      const y2 = r + r * Math.sin(end);
+      const largeArc = slice > 180 ? 1 : 0;
+      return `M ${r} ${r} L ${x1} ${y1} A ${r} ${r} 0 ${largeArc} 1 ${x2} ${y2} Z`;
+    });
+  }, [n, r, slice]);
+
+  function startSpin() {
+    if (!canSpin || spinning) return;
+    const spins = 6 + Math.floor(Math.random() * 4);
+    const offset = Math.random() * 360;
+    const total = spins * 360 + offset;
+    setTargetAngle(total);
+    setSpinning(true);
+    const start = performance.now();
+    const duration = 4000;
+    if (rafId.current) cancelAnimationFrame(rafId.current);
+    const step = (now) => {
+      const t = clamp((now - start) / duration, 0, 1);
+      setAngle(total * easeOutCubic(t));
+      if (t < 1) rafId.current = requestAnimationFrame(step);
+      else {
+        setSpinning(false);
+        const normalized = ((total % 360) + 360) % 360;
+        const pointer = 270;
+        let hit = 0;
+        for (let i = 0; i < n; i++) {
+          const start = (((i * slice - 90 + normalized) % 360) + 360) % 360;
+          const end = (start + slice) % 360;
+          const inside = start <= end ? (pointer >= start && pointer < end) : (pointer >= start || pointer < end);
+          if (inside) { hit = i; break; }
+        }
+        onResult(hit);
+      }
+    };
+    rafId.current = requestAnimationFrame(step);
+  }
+
+  const colorFor = (i) => (safeColors.length ? safeColors[i % safeColors.length] : `hsl(${(i * 360) / Math.max(1, n)},70%,65%)`);
+
+  return (
+    <div className="flex flex-col items-center gap-4">
+      <div className="relative" style={{ width: size, height: size }}>
+        <div className="absolute left-1/2 -translate-x-1/2 -top-4 z-20 select-none" aria-hidden>
+          <div className="w-0 h-0 border-l-8 border-r-8 border-b-[18px] border-l-transparent border-r-transparent border-b-black" />
+        </div>
+        <svg
+          viewBox={`0 0 ${size} ${size}`}
+          className="rounded-full shadow-lg bg-white"
+          style={{ transform: `rotate(${angle}deg)`, transformOrigin: "50% 50%", transformBox: "fill-box" }}
+        >
+          {n === 0 ? null : segments.map((d, i) => (
+            <path key={i} d={d} fill={colorFor(i)} stroke="#fff" strokeWidth={2} />
+          ))}
+          {n === 0 ? null : safeLabels.map((label, i) => {
+            const mid = rad((i + 0.5) * slice - 90);
+            const lx = r + (r * 0.65) * Math.cos(mid);
+            const ly = r + (r * 0.65) * Math.sin(mid);
+            return (
+              <text key={`label-${i}`} x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" fontSize={Math.max(12, size * 0.045)} fill="#111" style={{ userSelect: "none" }}>{label}</text>
+            );
+          })}
+        </svg>
+        <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+          <div className="w-24 h-24 rounded-full bg-white/90 shadow flex items-center justify-center text-center p-2">
+            <span className="text-xs font-semibold uppercase tracking-wide text-gray-800">{centerLabel}</span>
+          </div>
+        </div>
+      </div>
+      <button className="px-5 py-2 rounded-2xl bg-black text-white text-sm font-semibold shadow hover:opacity-90 disabled:opacity-50" disabled={!canSpin || spinning} onClick={startSpin}>{btnLabel}</button>
+    </div>
+  );
+}
+
+export default function App() {
+  const [data, setData] = useState(getInitialData);
+  const [selectedCategoryIndex, setSelectedCategoryIndex] = useState(null);
+  const currentCategory = selectedCategoryIndex != null ? data.categories[selectedCategoryIndex] : null;
+
+  const categoryLabels = useMemo(() => data.categories.map((c) => c.name), [data]);
+  const categoryColors = useMemo(() => data.categories.map((c) => c.color || "#ddd"), [data]);
+  const restaurantLabels = currentCategory?.items.map((i) => i.name) || [];
+  const restaurantColors = restaurantLabels.length ? Array(restaurantLabels.length).fill(currentCategory?.color || "#ccc") : [];
+
+  return (
+    <div className="min-h-screen w-full bg-gradient-to-b from-amber-50 to-neutral-50 text-gray-900">
+      <div className="max-w-4xl mx-auto p-6">
+        <header className="flex flex-col items-center gap-2 mb-6 text-center">
+          <h1 className="text-3xl md:text-4xl font-extrabold tracking-tight">{data.title}</h1>
+          <p className="text-gray-600">{data.subtitle}</p>
+        </header>
+        <div className="grid md:grid-cols-2 gap-8 items-start justify-items-center">
+          <div className="flex flex-col items-center">
+            <h2 className="text-lg font-semibold mb-2">Step 1: Pick a Category</h2>
+            <Wheel labels={categoryLabels} colors={categoryColors} size={320} onResult={(i) => { setSelectedCategoryIndex(i); }} btnLabel="Spin Categories" centerLabel="Cuisine" />
+          </div>
+          <div className="flex flex-col items-center">
+            <h2 className="text-lg font-semibold mb-2">Step 2: Pick a Restaurant</h2>
+            {currentCategory ? (
+              <Wheel labels={restaurantLabels} colors={restaurantColors} size={320} onResult={() => {}} btnLabel="Spin Restaurants" centerLabel={currentCategory?.name} />
+            ) : (
+              <div className="w-[320px] h-[320px] rounded-2xl border border-dashed grid place-items-center text-gray-500"><span>Spin the left wheel first</span></div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+(function __APP_TESTS__(){
+  if (typeof window === "undefined" || window.__APP_TESTS__) return;
+  window.__APP_TESTS__ = true;
+  function assert(c, m){ if(!c) throw new Error(m); }
+  const cfg = getInitialData();
+  assert(validateConfig(cfg), "config valid");
+  assert(Array.isArray(cfg.categories) && cfg.categories.length > 0, "categories exist");
+  const sample = cfg.categories[0];
+  assert(Array.isArray(sample.items) && sample.items.length > 0, "items exist");
+})();
